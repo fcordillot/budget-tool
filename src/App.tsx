@@ -116,6 +116,30 @@ export default function App() {
   const savingsToIncome = round2(Math.max(-plan.remainder, 0));
   const savingsAfter = sal.savingsBalance === null ? null : round2(sal.savingsBalance + split.toSavings - split.fromSavings);
   const savingsTarget = round2(sal.amount * sal.targetMonths);
+
+  // ---------- Récap des virements ----------
+  type Step = { key: string; kind: 'fund' | 'perso' | 'draw' | 'keep'; from: string; to?: string; amount: number; note?: string };
+  const up = (n: number) => Math.ceil(n - 0.005);
+  const down = (n: number) => Math.floor(n + 0.005);
+  const steps: Step[] = [];
+  if (sal.enabled && savingsToIncome > 0) {
+    steps.push({ key: 'draw-income', kind: 'draw', from: sal.savingsAccount, to: data.income.account, amount: up(savingsToIncome), note: '(manque du mois, à faire en premier)' });
+  }
+  for (const t of plan.toFund) steps.push({ key: `fund-${t.to}`, kind: 'fund', from: t.from, to: t.to, amount: up(t.amount) });
+  for (const t of plan.toRepatriate) steps.push({ key: `rep-${t.from}`, kind: 'perso', from: t.from, to: t.to, amount: down(t.amount), note: '(excédent)' });
+  if (sal.enabled) {
+    if (split.fromIncome > 0) steps.push({ key: 'salary', kind: 'perso', from: data.income.account, to: data.remainderAccount, amount: down(split.fromIncome), note: '(salaire)' });
+    if (split.toSavings > 0) steps.push({ key: 'savings', kind: 'perso', from: data.income.account, to: sal.savingsAccount, amount: down(split.toSavings), note: '(surplus)' });
+    if (savingsToRemainder > 0) steps.push({ key: 'draw-salary', kind: 'draw', from: sal.savingsAccount, to: data.remainderAccount, amount: up(savingsToRemainder), note: '(complément salaire)' });
+  } else if (plan.remainder > 0) {
+    steps.push({ key: 'remainder', kind: 'perso', from: data.income.account, to: data.remainderAccount, amount: down(plan.remainder), note: '(ce qui reste)' });
+  }
+  if (plan.keepOnIncome > 0) steps.push({ key: 'keep', kind: 'keep', from: data.income.account, amount: up(plan.keepOnIncome), note: '(prélèvements du mois)' });
+
+  const stepText = (st: Step) =>
+    st.kind === 'keep'
+      ? `Laisse ${money0(st.amount)} sur ${st.from}`
+      : `Vire ${money0(st.amount)} depuis ${st.from} vers ${st.to}${st.note ? ` ${st.note}` : ''}`;
   const computedById = useMemo(() => new Map(computed.map((c) => [c.item.id, c])), [computed]);
 
   const accountOptions = data.accounts;
@@ -123,6 +147,19 @@ export default function App() {
 
   // ---------- mutations ----------
   const patch = (p: Partial<BudgetData>) => setData((d) => ({ ...d, ...p }));
+  const [doneSteps, setDoneSteps] = useState<string[]>([]);
+  const [copied, setCopied] = useState(false);
+  const toggleStep = (k: string) => setDoneSteps((d) => (d.includes(k) ? d.filter((x) => x !== k) : [...d, k]));
+  async function copySteps() {
+    const text = [`Virement de ${money(income)}`, ...steps.map((st, i) => `${i + 1}. ${stepText(st)}`)].join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      window.prompt('Copie le récap :', text);
+    }
+  }
   const patchSalary = (p: Partial<BudgetData['salary']>) =>
     setData((d) => {
       const salary = { ...d.salary, ...p };
@@ -144,6 +181,26 @@ export default function App() {
     const name = window.prompt(kind === 'accounts' ? 'Nom du compte ? (ex. revolut)' : 'Nom du tag ?')?.trim();
     if (!name) return;
     setData((d) => ({ ...d, [kind]: uniqSorted([...d[kind], name]) }));
+  }
+
+  function rename(kind: 'accounts' | 'tags', oldName: string) {
+    const name = window.prompt(`Nouveau nom pour « ${oldName} » ?`, oldName)?.trim();
+    if (!name || name === oldName) return;
+    setData((d) => {
+      const swap = (x: string) => (x === oldName ? name : x);
+      if (kind === 'tags') {
+        return { ...d, tags: uniqSorted(d.tags.map(swap)), items: d.items.map((i) => ({ ...i, tags: [...new Set(i.tags.map(swap))] })) };
+      }
+      return {
+        ...d,
+        accounts: uniqSorted(d.accounts.map(swap)),
+        income: { ...d.income, account: swap(d.income.account) },
+        remainderAccount: swap(d.remainderAccount),
+        reserve: { ...d.reserve, account: swap(d.reserve.account) },
+        salary: { ...d.salary, savingsAccount: swap(d.salary.savingsAccount) },
+        items: d.items.map((i) => ({ ...i, account: swap(i.account) })),
+      };
+    });
   }
 
   function removeFromList(kind: 'accounts' | 'tags', name: string) {
@@ -295,73 +352,41 @@ export default function App() {
       {/* ---------- Plan ---------- */}
       <section className="card">
         <h2>Virements à faire</h2>
-        <ul className="plan">
-          {plan.toFund.map((t) => (
-            <li key={t.to}>
-              <span>
-                <Badge>{t.from}</Badge> → <Badge>{t.to}</Badge>
-              </span>
-              <b>{money(t.amount)}</b>
-            </li>
-          ))}
-          {plan.toRepatriate.map((t) => (
-            <li key={t.from}>
-              <span>
-                <Badge>{t.from}</Badge> → <Badge>{t.to}</Badge> <span className="muted">excédent</span>
-              </span>
-              <b>{money(t.amount)}</b>
-            </li>
-          ))}
-          <li>
-            <span>
-              Garder sur <Badge>{data.income.account}</Badge>
-            </span>
-            <b>{money(plan.keepOnIncome)}</b>
-          </li>
-          {sal.enabled ? (
-            <>
-              {split.fromIncome > 0 ? (
-                <li className="remainder">
+        <ol className="steps">
+          {steps.map((st) => {
+            const done = doneSteps.includes(st.key);
+            return (
+              <li key={st.key} className={`${done ? 'done' : ''} ${st.kind}`}>
+                <label className="stepLabel">
+                  <input type="checkbox" checked={done} onChange={() => toggleStep(st.key)} />
                   <span>
-                    <Badge>{data.income.account}</Badge> → <Badge>{data.remainderAccount}</Badge> <span className="muted">salaire</span>
+                    {st.kind === 'keep' ? (
+                      <>
+                        Laisse <b>{money0(st.amount)}</b> sur <Badge>{st.from}</Badge>
+                      </>
+                    ) : (
+                      <>
+                        Vire <b>{money0(st.amount)}</b> depuis <Badge>{st.from}</Badge> vers <Badge>{st.to ?? ''}</Badge>
+                      </>
+                    )}
+                    {st.note ? <span className="muted small"> {st.note}</span> : null}
                   </span>
-                  <b>{money(split.fromIncome)}</b>
-                </li>
-              ) : null}
-              {split.toSavings > 0 ? (
-                <li className="remainder">
-                  <span>
-                    <Badge>{data.income.account}</Badge> → <Badge>{sal.savingsAccount}</Badge> <span className="muted">surplus</span>
-                  </span>
-                  <b>{money(split.toSavings)}</b>
-                </li>
-              ) : null}
-              {savingsToRemainder > 0 ? (
-                <li className="remainder draw">
-                  <span>
-                    <Badge>{sal.savingsAccount}</Badge> → <Badge>{data.remainderAccount}</Badge> <span className="muted">complément salaire</span>
-                  </span>
-                  <b>{money(savingsToRemainder)}</b>
-                </li>
-              ) : null}
-              {savingsToIncome > 0 ? (
-                <li className="remainder draw">
-                  <span>
-                    <Badge>{sal.savingsAccount}</Badge> → <Badge>{data.income.account}</Badge> <span className="muted">manque du mois</span>
-                  </span>
-                  <b>{money(savingsToIncome)}</b>
-                </li>
-              ) : null}
-            </>
-          ) : (
-            <li className={plan.remainder < 0 ? 'remainder negative' : 'remainder'}>
-              <span>
-                <Badge>{data.income.account}</Badge> → <Badge>{data.remainderAccount}</Badge> <span className="muted">ce qui reste</span>
-              </span>
-              <b>{money(plan.remainder)}</b>
-            </li>
-          )}
-        </ul>
+                </label>
+              </li>
+            );
+          })}
+        </ol>
+        <div className="stepActions">
+          <button className="small" onClick={copySteps}>
+            {copied ? 'Copié' : 'Copier le récap'}
+          </button>
+          {doneSteps.length ? (
+            <button className="small" onClick={() => setDoneSteps([])}>
+              Tout décocher
+            </button>
+          ) : null}
+        </div>
+        <p className="muted small">Montants arrondis à l'euro : vers les comptes de charges au-dessus, vers le perso et l'épargne en dessous.</p>
         {sal.enabled && savingsAfter !== null && savingsAfter < 0 ? (
           <div className="warn">
             <b>L'épargne ne suffit pas : il manque {money(-savingsAfter)}.</b> Baisse le salaire ce mois-ci ou mets une ligne en pause.
@@ -802,11 +827,14 @@ export default function App() {
       {/* ---------- Comptes & tags ---------- */}
       <section className="card">
         <h2>Comptes et tags</h2>
+        <p className="muted small">Touche un nom pour le renommer partout.</p>
         <div className="labelText">Comptes</div>
         <div className="chips">
           {data.accounts.map((a) => (
             <span key={a} className="chip on" style={{ background: badgeColor(a) }}>
-              {a}
+              <button className="chipName" onClick={() => rename('accounts', a)} title="Renommer">
+                {a}
+              </button>
               {!accountInUse(a) ? (
                 <button className="x" onClick={() => removeFromList('accounts', a)} title="Retirer">
                   ×
@@ -824,7 +852,9 @@ export default function App() {
         <div className="chips">
           {data.tags.map((t) => (
             <span key={t} className="chip on" style={{ background: badgeColor(t) }}>
-              {t}
+              <button className="chipName" onClick={() => rename('tags', t)} title="Renommer">
+                {t}
+              </button>
               {!tagInUse(t) ? (
                 <button className="x" onClick={() => removeFromList('tags', t)} title="Retirer">
                   ×
