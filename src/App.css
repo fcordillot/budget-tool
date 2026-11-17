@@ -102,3 +102,14 @@ table.forecast input.days { width: 56px; padding: 4px 6px; text-align: right; }
 .progressText { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; margin-bottom: 6px; }
 .progress { height: 8px; border-radius: 99px; background: var(--border); overflow: hidden; }
 .progress > div { height: 100%; background: var(--pos); border-radius: 99px; }
+
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.steps li { border-bottom: 1px solid var(--border); counter-increment: step; }
+.steps li:last-child { border-bottom: none; }
+.stepLabel { flex-direction: row; align-items: center; gap: 10px; padding: 10px 0; font-weight: 400; font-size: 15px; line-height: 1.6; cursor: pointer; }
+.stepLabel input { width: 22px; height: 22px; flex: none; accent-color: var(--pos); }
+.stepLabel b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.steps li.perso b { color: var(--pos); }
+.steps li.draw b { color: var(--neg); }
+.steps li.done span { opacity: 0.45; text-decoration: line-through; }
+.stepActions { display: flex; gap: 8px; margin-top: 4px; }
