@@ -183,6 +183,26 @@ export default function App() {
     setData((d) => ({ ...d, [kind]: uniqSorted([...d[kind], name]) }));
   }
 
+  function rename(kind: 'accounts' | 'tags', oldName: string) {
+    const name = window.prompt(`Nouveau nom pour « ${oldName} » ?`, oldName)?.trim();
+    if (!name || name === oldName) return;
+    setData((d) => {
+      const swap = (x: string) => (x === oldName ? name : x);
+      if (kind === 'tags') {
+        return { ...d, tags: uniqSorted(d.tags.map(swap)), items: d.items.map((i) => ({ ...i, tags: [...new Set(i.tags.map(swap))] })) };
+      }
+      return {
+        ...d,
+        accounts: uniqSorted(d.accounts.map(swap)),
+        income: { ...d.income, account: swap(d.income.account) },
+        remainderAccount: swap(d.remainderAccount),
+        reserve: { ...d.reserve, account: swap(d.reserve.account) },
+        salary: { ...d.salary, savingsAccount: swap(d.salary.savingsAccount) },
+        items: d.items.map((i) => ({ ...i, account: swap(i.account) })),
+      };
+    });
+  }
+
   function removeFromList(kind: 'accounts' | 'tags', name: string) {
     setData((d) => ({ ...d, [kind]: d[kind].filter((x) => x !== name) }));
   }
@@ -807,11 +827,14 @@ export default function App() {
       {/* ---------- Comptes & tags ---------- */}
       <section className="card">
         <h2>Comptes et tags</h2>
+        <p className="muted small">Touche un nom pour le renommer partout.</p>
         <div className="labelText">Comptes</div>
         <div className="chips">
           {data.accounts.map((a) => (
             <span key={a} className="chip on" style={{ background: badgeColor(a) }}>
-              {a}
+              <button className="chipName" onClick={() => rename('accounts', a)} title="Renommer">
+                {a}
+              </button>
               {!accountInUse(a) ? (
                 <button className="x" onClick={() => removeFromList('accounts', a)} title="Retirer">
                   ×
@@ -829,7 +852,9 @@ export default function App() {
         <div className="chips">
           {data.tags.map((t) => (
             <span key={t} className="chip on" style={{ background: badgeColor(t) }}>
-              {t}
+              <button className="chipName" onClick={() => rename('tags', t)} title="Renommer">
+                {t}
+              </button>
               {!tagInUse(t) ? (
                 <button className="x" onClick={() => removeFromList('tags', t)} title="Retirer">
                   ×

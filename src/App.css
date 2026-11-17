@@ -113,3 +113,5 @@ table.forecast input.days { width: 56px; padding: 4px 6px; text-align: right; }
 .steps li.draw b { color: var(--neg); }
 .steps li.done span { opacity: 0.45; text-decoration: line-through; }
 .stepActions { display: flex; gap: 8px; margin-top: 4px; }
+.chip .chipName { border: none; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.badge { text-transform: none; letter-spacing: 0; font-size: 12px; }
