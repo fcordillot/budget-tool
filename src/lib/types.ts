@@ -32,13 +32,36 @@ export type BudgetItem = {
   dueDay?: number;
   /** Ligne ignorée ce mois-ci (ex. PER suspendu) */
   paused?: boolean;
+  /** En pause jusqu'à ce mois inclus (format AAAA-MM) */
+  pausedUntil?: string;
 };
+
+/** Vrai si la ligne est en pause (multi-mois) à cette date */
+export function isPausedAt(item: { pausedUntil?: string }, at: Date): boolean {
+  if (!item.pausedUntil) return false;
+  const [y, m] = item.pausedUntil.split('-').map(Number);
+  if (!y || !m) return false;
+  return at < new Date(y, m, 1);
+}
 
 export type Reserve = {
   /** Compte qui sert de réserve (sous-compte charges) */
   account: string;
   /** Solde actuel saisi à la main, avant virement */
   balance: number | null;
+};
+
+export type Salary = {
+  /** Mode salaire fixe activé */
+  enabled: boolean;
+  /** Montant versé chaque mois sur le compte "reste" */
+  amount: number;
+  /** Compte d'épargne de précaution (surplus / pioche) */
+  savingsAccount: string;
+  /** Solde actuel de l'épargne de précaution */
+  savingsBalance: number | null;
+  /** Objectif en nombre de mois de salaire */
+  targetMonths: number;
 };
 
 export type BudgetData = {
@@ -50,6 +73,7 @@ export type BudgetData = {
   reserve: Reserve;
   /** Jours facturés prévus pour les prochains virements (projection) */
   forecastDays: number[];
+  salary: Salary;
   items: BudgetItem[];
 };
 
@@ -62,6 +86,14 @@ export const DEFAULT_INCOME: Income = {
   vatRate: 0.2,
 };
 
+export const DEFAULT_SALARY: Salary = {
+  enabled: false,
+  amount: 2000,
+  savingsAccount: 'epargne',
+  savingsBalance: null,
+  targetMonths: 3,
+};
+
 export const DEFAULT_DATA: BudgetData = {
   income: DEFAULT_INCOME,
   accounts: ['shine-personal'],
@@ -69,6 +101,7 @@ export const DEFAULT_DATA: BudgetData = {
   remainderAccount: 'revolut',
   reserve: { account: '', balance: null },
   forecastDays: [19, 19, 19, 19],
+  salary: DEFAULT_SALARY,
   items: [],
 };
 

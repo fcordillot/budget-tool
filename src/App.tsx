@@ -3,7 +3,7 @@ import './App.css';
 import type { BudgetData, BudgetItem, Recurrence } from './lib/types';
 import { DEFAULT_DATA, incomeTTC } from './lib/types';
 import { exportBudgetData, loadBudgetData, normalizeImportedData, saveBudgetData, STORAGE_KEY_LABEL, uniqSorted } from './lib/storage';
-import { addMonths, computeForecast, computeItems, computePlan, dueBetween, round2, startOfDay, sumByAccount, sumByTag } from './lib/compute';
+import { addMonths, computeForecast, computeItems, computePlan, dueBetween, round2, splitSalary, startOfDay, sumByAccount, sumByTag } from './lib/compute';
 import { SAMPLE_DATA } from './lib/sampleData';
 import { uuid } from './lib/uuid';
 
@@ -98,14 +98,24 @@ export default function App() {
   }, [data]);
 
   const income = incomeTTC(data.income);
-  const { computed, skipped, paused } = useMemo(() => computeItems(data), [data]);
+  const { computed, skipped, paused } = useMemo(() => computeItems(data, { at: today }), [data, today]);
   const plan = useMemo(() => computePlan(data, computed, income), [data, computed, income]);
   const byTag = useMemo(() => sumByTag(computed), [computed]);
   const byAccount = useMemo(() => sumByAccount(computed), [computed]);
   const forecast = useMemo(() => computeForecast(data, today), [data, today]);
   const upcoming = useMemo(() => dueBetween(data, today, addMonths(today, 6), income, true), [data, today, income]);
   const forecastAll = [forecast.current, ...forecast.rows];
-  const cumul = forecastAll.map((_, i) => round2(forecastAll.slice(0, i + 1).reduce((s, r) => s + r.remainder, 0)));
+  const sal = data.salary;
+  // En mode salaire : on cumule (reste - salaire) à partir du solde d'épargne ; sinon le reste brut depuis 0
+  const cumulStart = sal.enabled ? sal.savingsBalance ?? 0 : 0;
+  const cumul = forecastAll.map((_, i) =>
+    round2(cumulStart + forecastAll.slice(0, i + 1).reduce((s, r) => s + r.remainder - (sal.enabled ? sal.amount : 0), 0)),
+  );
+  const split = splitSalary(plan.remainder, sal.amount);
+  const savingsToRemainder = round2(sal.amount - split.fromIncome);
+  const savingsToIncome = round2(Math.max(-plan.remainder, 0));
+  const savingsAfter = sal.savingsBalance === null ? null : round2(sal.savingsBalance + split.toSavings - split.fromSavings);
+  const savingsTarget = round2(sal.amount * sal.targetMonths);
   const computedById = useMemo(() => new Map(computed.map((c) => [c.item.id, c])), [computed]);
 
   const accountOptions = data.accounts;
@@ -113,6 +123,11 @@ export default function App() {
 
   // ---------- mutations ----------
   const patch = (p: Partial<BudgetData>) => setData((d) => ({ ...d, ...p }));
+  const patchSalary = (p: Partial<BudgetData['salary']>) =>
+    setData((d) => {
+      const salary = { ...d.salary, ...p };
+      return { ...d, salary, accounts: salary.enabled ? uniqSorted([...d.accounts, salary.savingsAccount]) : d.accounts };
+    });
   const patchIncome = (p: Partial<BudgetData['income']>) => setData((d) => ({ ...d, income: { ...d.income, ...p } }));
   const updateItem = (id: string, p: Partial<BudgetItem>) =>
     setData((d) => ({ ...d, items: d.items.map((it) => (it.id === id ? { ...it, ...p } : it)) }));
@@ -136,7 +151,7 @@ export default function App() {
   }
 
   const accountInUse = (a: string) =>
-    a === data.income.account || a === data.remainderAccount || a === data.reserve.account || data.items.some((i) => i.account === a);
+    a === data.income.account || a === data.remainderAccount || a === data.reserve.account || (sal.enabled && a === sal.savingsAccount) || data.items.some((i) => i.account === a);
   const tagInUse = (t: string) => data.items.some((i) => i.tags.includes(t));
 
   // ---------- import / export ----------
@@ -303,14 +318,56 @@ export default function App() {
             </span>
             <b>{money(plan.keepOnIncome)}</b>
           </li>
-          <li className={plan.remainder < 0 ? 'remainder negative' : 'remainder'}>
-            <span>
-              <Badge>{data.income.account}</Badge> → <Badge>{data.remainderAccount}</Badge> <span className="muted">ce qui reste</span>
-            </span>
-            <b>{money(plan.remainder)}</b>
-          </li>
+          {sal.enabled ? (
+            <>
+              {split.fromIncome > 0 ? (
+                <li className="remainder">
+                  <span>
+                    <Badge>{data.income.account}</Badge> → <Badge>{data.remainderAccount}</Badge> <span className="muted">salaire</span>
+                  </span>
+                  <b>{money(split.fromIncome)}</b>
+                </li>
+              ) : null}
+              {split.toSavings > 0 ? (
+                <li className="remainder">
+                  <span>
+                    <Badge>{data.income.account}</Badge> → <Badge>{sal.savingsAccount}</Badge> <span className="muted">surplus</span>
+                  </span>
+                  <b>{money(split.toSavings)}</b>
+                </li>
+              ) : null}
+              {savingsToRemainder > 0 ? (
+                <li className="remainder draw">
+                  <span>
+                    <Badge>{sal.savingsAccount}</Badge> → <Badge>{data.remainderAccount}</Badge> <span className="muted">complément salaire</span>
+                  </span>
+                  <b>{money(savingsToRemainder)}</b>
+                </li>
+              ) : null}
+              {savingsToIncome > 0 ? (
+                <li className="remainder draw">
+                  <span>
+                    <Badge>{sal.savingsAccount}</Badge> → <Badge>{data.income.account}</Badge> <span className="muted">manque du mois</span>
+                  </span>
+                  <b>{money(savingsToIncome)}</b>
+                </li>
+              ) : null}
+            </>
+          ) : (
+            <li className={plan.remainder < 0 ? 'remainder negative' : 'remainder'}>
+              <span>
+                <Badge>{data.income.account}</Badge> → <Badge>{data.remainderAccount}</Badge> <span className="muted">ce qui reste</span>
+              </span>
+              <b>{money(plan.remainder)}</b>
+            </li>
+          )}
         </ul>
-        {plan.remainder < 0 ? (
+        {sal.enabled && savingsAfter !== null && savingsAfter < 0 ? (
+          <div className="warn">
+            <b>L'épargne ne suffit pas : il manque {money(-savingsAfter)}.</b> Baisse le salaire ce mois-ci ou mets une ligne en pause.
+          </div>
+        ) : null}
+        {!sal.enabled && plan.remainder < 0 ? (
           <div className="warn">
             <b>Il manque {money(-plan.remainder)}.</b> Mets en pause une ligne ce mois-ci (bouton « Pause » sur un PER, une provision
             dont l'échéance est loin...), ou pioche dans la réserve de <b>{data.reserve.account || 'ton sous-compte'}</b> si elle couvre la
@@ -333,6 +390,62 @@ export default function App() {
             ))}
           </select>
         </label>
+      </section>
+
+      {/* ---------- Salaire fixe ---------- */}
+      <section className="card">
+        <div className="titleRow">
+          <h2>Salaire fixe</h2>
+          <label className="switch">
+            <input type="checkbox" checked={sal.enabled} onChange={(e) => patchSalary({ enabled: e.target.checked })} />
+            <span>{sal.enabled ? 'Activé' : 'Désactivé'}</span>
+          </label>
+        </div>
+        <p className="muted">
+          Tu te verses le même montant chaque mois sur {data.remainderAccount}. Les gros mois, le surplus part en épargne de précaution ; les
+          mois creux, tu complètes depuis l'épargne.
+        </p>
+        {sal.enabled ? (
+          <>
+            <div className="grid3">
+              <label>
+                Salaire mensuel
+                <NumberField value={sal.amount} onChange={(n) => patchSalary({ amount: n ?? 0 })} />
+              </label>
+              <label>
+                Compte épargne
+                <input
+                  value={sal.savingsAccount}
+                  onChange={(e) => patchSalary({ savingsAccount: e.target.value })}
+                  onBlur={(e) => patchSalary({ savingsAccount: e.target.value.trim() || 'epargne' })}
+                />
+              </label>
+              <label>
+                Solde épargne actuel
+                <NumberField value={sal.savingsBalance} placeholder="ex. 0" onChange={(n) => patchSalary({ savingsBalance: n ?? null })} />
+              </label>
+              <label>
+                Objectif (mois de salaire)
+                <NumberField value={sal.targetMonths} onChange={(n) => patchSalary({ targetMonths: n ?? 3 })} />
+              </label>
+            </div>
+            {savingsAfter !== null ? (
+              <div className="progressWrap">
+                <div className="progressText">
+                  <span>
+                    Épargne après ce mois : <b className={savingsAfter < 0 ? 'neg' : ''}>{money(savingsAfter)}</b>
+                  </span>
+                  <span className="muted">objectif {money0(savingsTarget)}</span>
+                </div>
+                <div className="progress">
+                  <div style={{ width: `${Math.max(0, Math.min(100, savingsTarget ? (savingsAfter / savingsTarget) * 100 : 0))}%` }} />
+                </div>
+              </div>
+            ) : (
+              <p className="muted small">Saisis le solde de ton épargne pour suivre l'objectif.</p>
+            )}
+          </>
+        ) : null}
       </section>
 
       {/* ---------- Réserve ---------- */}
@@ -394,8 +507,11 @@ export default function App() {
       <section className="card">
         <h2>Projection</h2>
         <p className="muted">
-          Jours facturés prévus pour les prochains virements (congés, voyages...). « Reste » = ce qui part vers {data.remainderAccount} ; « Cumul » le
-          total depuis ce mois, négatif = à financer avec de l'épargne. Les pauses ne s'appliquent qu'au mois en cours.
+          Jours facturés prévus pour les prochains virements (congés, voyages...). « Reste » = ce qui reste une fois tout payé.{' '}
+          {sal.enabled
+            ? `« Épargne » = solde de l'épargne après ton salaire de ${money0(sal.amount)}.`
+            : '« Cumul » = total depuis ce mois, négatif = à financer avec de l\'épargne.'}{' '}
+          « Pause ce mois » ne compte que pour le mois en cours ; « En pause jusqu'à » s'applique aussi ici.
         </p>
         <div className="tableWrap">
           <table className="forecast">
@@ -404,7 +520,7 @@ export default function App() {
                 <th>Virement</th>
                 <th>Jours</th>
                 <th>Reste</th>
-                <th>Cumul</th>
+                <th>{sal.enabled ? 'Épargne' : 'Cumul'}</th>
                 <th>Réserve</th>
                 <th></th>
               </tr>
@@ -416,7 +532,7 @@ export default function App() {
                 </td>
                 <td>{forecast.current.days}</td>
                 <td className={forecast.current.remainder < 0 ? 'neg' : ''}>{money0(forecast.current.remainder)}</td>
-                <td className={forecast.current.remainder < 0 ? 'neg' : ''}>{money0(forecast.current.remainder)}</td>
+                <td className={cumul[0] < 0 ? 'neg' : ''}>{money0(cumul[0])}</td>
                 <td className={(forecast.current.reserveAfter ?? 0) < 0 ? 'neg' : ''}>
                   {forecast.current.reserveAfter === null ? '·' : money0(forecast.current.reserveAfter)}
                 </td>
@@ -496,7 +612,7 @@ export default function App() {
                 const isFormula = it.amountFormula !== undefined;
                 const rec = it.amountRecurrence ?? 'monthly';
                 return (
-                  <details key={it.id} className={`itemCard${it.paused ? ' isPaused' : ''}`}>
+                  <details key={it.id} className={`itemCard${it.paused || (!ci && it.pausedUntil) ? ' isPaused' : ''}`}>
                     <summary>
                       <div>
                         <div className="itemTitle">{it.label || it.name || '(sans nom)'}</div>
@@ -504,10 +620,11 @@ export default function App() {
                           {rec !== 'monthly' && ci ? `${money(ci.baseAmount)} ${RECURRENCE_LABEL[rec]}` : RECURRENCE_LABEL[rec]}
                           {it.dueMonths?.length ? ` · mois ${it.dueMonths.join(', ')}` : ''}
                           {it.tags.length ? ` · ${it.tags.join(', ')}` : ''}
+                          {it.pausedUntil ? ` · pause jusqu'à ${it.pausedUntil.split('-').reverse().join('/')}` : ''}
                         </div>
                       </div>
                       <div className={`itemAmount ${ci && ci.monthlyAmount > 0 ? 'pos' : ''}`}>
-                        {it.paused ? 'en pause' : ci ? money(round2(ci.monthlyAmount)) : '·'}
+                        {it.paused || (!ci && it.pausedUntil) ? 'en pause' : ci ? money(round2(ci.monthlyAmount)) : '·'}
                         {ci && !it.paused ? <span className="muted small">{pct(ci.monthlyAmount)}</span> : null}
                       </div>
                     </summary>
@@ -604,6 +721,14 @@ export default function App() {
                           </button>
                         </div>
                       </div>
+                      <label>
+                        En pause jusqu'à (inclus)
+                        <input
+                          type="month"
+                          value={it.pausedUntil ?? ''}
+                          onChange={(e) => updateItem(it.id, { pausedUntil: e.target.value || undefined })}
+                        />
+                      </label>
                       <div className="full itemActions">
                         <button onClick={() => updateItem(it.id, { paused: it.paused ? undefined : true })}>
                           {it.paused ? 'Réactiver' : 'Pause ce mois'}
