@@ -1,5 +1,3 @@
-import type { Income } from './types';
-
 export type FormulaResult =
   | { ok: true; value: number }
   | { ok: false; error: string };
@@ -16,14 +14,14 @@ export type FormulaResult =
 // This is intended for your own formulas (not untrusted public input).
 const MATH_ALLOW = new Set(['ceil', 'floor', 'round', 'abs', 'min', 'max']);
 
-export function evalAmountFormula(formula: string, ctx: { income: Income }): FormulaResult {
+export function evalAmountFormula(formula: string, ctx: { income: { amount: number } }): FormulaResult {
   const raw = (formula ?? '').trim();
   if (!raw) return { ok: false, error: 'Empty formula' };
 
   const replaced = raw.replaceAll('{income}', String(ctx.income.amount));
 
   // Forbid obviously dangerous characters.
-  if (/[`\[\]{};,'"\\]/.test(replaced)) {
+  if (/[`[\]{};,'"\\]/.test(replaced)) {
     return { ok: false, error: 'Formula contains forbidden characters.' };
   }
 
@@ -46,7 +44,6 @@ export function evalAmountFormula(formula: string, ctx: { income: Income }): For
   }
 
   try {
-    // eslint-disable-next-line no-new-func
     const fn = new Function('Math', `"use strict"; return (${replaced});`) as (Math: Math) => unknown;
     const out = fn(Math);
     const num = typeof out === 'number' ? out : Number(out);

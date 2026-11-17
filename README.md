@@ -1,6 +1,15 @@
-# Buget tool (localStorage)
+# Budget tool (localStorage)
 
-Petit outil de budget 100% local (localStorage) avec import/export JSON, formules `{income}`, récap par tag/compte et plan de transferts.
+Petit outil de budget 100 % local (localStorage) pour savoir, à chaque virement client, combien envoyer sur chaque compte.
+
+- Virement saisi en montant TTC ou en jours facturés × TJM
+- Lignes mensuelles, trimestrielles ou annuelles (provisionnées /3 ou /12), avec mois et jour d'échéance
+- Formules sur `{income}` (virement TTC), ex. TVA : `-Math.ceil({income} - ({income} / 1.20))`
+- Plan de virements, avec « ce qui reste » vers un compte perso et alerte quand il manque de l'argent
+- Pause d'une ligne pour le mois en cours (ex. versement PER suspendu)
+- Réserve (sous-compte charges) : solde actuel, couverture de la prochaine échéance
+- Projection sur les prochains virements (jours prévus, reste cumulé, réserve)
+- Import/export JSON (feuille de partage iOS pour enregistrer dans Fichiers / iCloud Drive). Les anciens exports restent importables.
 
 ## Dev
 
