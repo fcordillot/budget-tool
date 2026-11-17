@@ -1,5 +1,5 @@
 import type { BudgetData, BudgetItem } from './types';
-import { incomeTTC, recurrenceDivisor } from './types';
+import { incomeTTC, isPausedAt, recurrenceDivisor } from './types';
 import { evalAmountFormula } from './formula';
 
 export type ComputedItem = {
@@ -33,7 +33,7 @@ export function computeBaseAmount(
 
 export function computeItems(
   data: BudgetData,
-  opts: { income?: number; ignorePause?: boolean } = {},
+  opts: { income?: number; ignorePause?: boolean; at?: Date } = {},
 ): { computed: ComputedItem[]; skipped: { item: BudgetItem; reason: string }[]; paused: BudgetItem[] } {
   const income = opts.income ?? incomeTTC(data.income);
   const computed: ComputedItem[] = [];
@@ -41,7 +41,7 @@ export function computeItems(
   const paused: BudgetItem[] = [];
 
   for (const item of data.items) {
-    if (item.paused && !opts.ignorePause) {
+    if ((item.paused && !opts.ignorePause) || isPausedAt(item, opts.at ?? new Date())) {
       paused.push(item);
       continue;
     }
@@ -113,6 +113,27 @@ export function computePlan(data: BudgetData, computed: ComputedItem[], income: 
   };
 }
 
+// ---------- Salaire fixe ----------
+
+export type SalarySplit = {
+  /** Versé sur le compte "reste" */
+  salary: number;
+  /** Part du virement envoyée vers l'épargne (surplus) */
+  toSavings: number;
+  /** Montant à prendre dans l'épargne pour compléter le salaire */
+  fromSavings: number;
+  /** Part du virement qui va au compte "reste" */
+  fromIncome: number;
+};
+
+export function splitSalary(remainder: number, salary: number): SalarySplit {
+  if (remainder >= salary) {
+    return { salary, toSavings: round2(remainder - salary), fromSavings: 0, fromIncome: salary };
+  }
+  const fromIncome = Math.max(remainder, 0);
+  return { salary, toSavings: 0, fromSavings: round2(salary - remainder), fromIncome: round2(fromIncome) };
+}
+
 // ---------- Échéances ----------
 
 export type Due = { date: Date; item: BudgetItem; amount: number };
@@ -133,7 +154,7 @@ export function dueBetween(data: BudgetData, from: Date, to: Date, income: numbe
     for (let y = from.getFullYear(); y <= to.getFullYear(); y++) {
       for (const m of item.dueMonths ?? []) {
         const d = new Date(y, m - 1, day);
-        if (d >= from && d < to) out.push({ date: d, item, amount: base.value });
+        if (d >= from && d < to && !isPausedAt(item, d)) out.push({ date: d, item, amount: base.value });
       }
     }
   }
@@ -185,7 +206,7 @@ export type ForecastRow = {
 export function computeForecast(data: BudgetData, today: Date): { current: ForecastRow; rows: ForecastRow[] } {
   const start = startOfDay(today);
   const income0 = incomeTTC(data.income);
-  const { computed: c0 } = computeItems(data, { income: income0 });
+  const { computed: c0 } = computeItems(data, { income: income0, at: start });
   const plan0 = computePlan(data, c0, income0);
   const cyc0 = reserveCycle(data, c0, income0, start, false);
   let reserve: number | null = data.reserve.balance;
@@ -204,7 +225,7 @@ export function computeForecast(data: BudgetData, today: Date): { current: Forec
   (data.forecastDays ?? []).forEach((days, i) => {
     const from = addMonths(start, i + 1);
     const inc = round2(days * data.income.dailyRate * (1 + data.income.vatRate));
-    const { computed } = computeItems(data, { income: inc, ignorePause: true });
+    const { computed } = computeItems(data, { income: inc, ignorePause: true, at: from });
     const plan = computePlan(data, computed, inc);
     const cyc = reserveCycle(data, computed, inc, from, true);
     if (reserve !== null) reserve = round2(reserve + cyc.transferIn - cyc.outflows);

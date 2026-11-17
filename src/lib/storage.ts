@@ -1,4 +1,4 @@
-import { DEFAULT_DATA, DEFAULT_INCOME, normalizeRecurrence, type BudgetData, type BudgetItem } from './types';
+import { DEFAULT_DATA, DEFAULT_INCOME, DEFAULT_SALARY, normalizeRecurrence, type BudgetData, type BudgetItem } from './types';
 import { uuid } from './uuid';
 
 const STORAGE_KEY = 'budget-tool:data:v2';
@@ -67,6 +67,7 @@ export function normalizeImportedData(raw: unknown): BudgetData {
       dueMonths: dueMonths?.length ? dueMonths : undefined,
       dueDay,
       paused: it.paused === true ? true : undefined,
+      pausedUntil: typeof it.pausedUntil === 'string' && /^\d{4}-\d{2}$/.test(it.pausedUntil) ? it.pausedUntil : undefined,
     });
   }
 
@@ -76,6 +77,14 @@ export function normalizeImportedData(raw: unknown): BudgetData {
   const forecastDays = Array.isArray(raw.forecastDays)
     ? raw.forecastDays.filter((d): d is number => typeof d === 'number' && Number.isFinite(d) && d >= 0).slice(0, 12)
     : DEFAULT_DATA.forecastDays;
+  const sal = isRecord(raw.salary) ? raw.salary : {};
+  const salary = {
+    enabled: sal.enabled === true,
+    amount: num(sal.amount, DEFAULT_SALARY.amount),
+    savingsAccount: str(sal.savingsAccount).trim() || DEFAULT_SALARY.savingsAccount,
+    savingsBalance: typeof sal.savingsBalance === 'number' && Number.isFinite(sal.savingsBalance) ? sal.savingsBalance : null,
+    targetMonths: num(sal.targetMonths, DEFAULT_SALARY.targetMonths),
+  };
 
   return {
     income,
@@ -84,6 +93,7 @@ export function normalizeImportedData(raw: unknown): BudgetData {
     remainderAccount,
     reserve: { account: reserveAccount, balance: typeof res.balance === 'number' && Number.isFinite(res.balance) ? res.balance : null },
     forecastDays,
+    salary,
     items,
   };
 }
